@@ -112,3 +112,60 @@
 ## 02:50 - Repository Snapshot Commit
 - Prepared a full repository commit including scripts, Slurm configs, inference code updates, logs, and session notes.
 - Snapshot created at user request: "commit everything with session note".
+
+## 13:50 - MedGemma 27B OOM Debug (Job 6417414)
+- **Root cause**: CUDA OOM — 27B model at 4-bit NF4 consumed 39.35/39.50 GiB during weight materialization (~layer 36/46).
+- Node hardware: 4× A100-40GB per node, 256 GB RAM — previous job only used 1 GPU.
+- **Fix applied to `run_test_inference_27b.sbatch`**: `--gpus=1` → `--gpus=2`, `--mem=122G` → `--mem=200G`.
+- **Fix applied to `test_inference.py`**: removed counterproductive `max_memory` cap, added `torch.cuda.empty_cache()`, added multi-GPU diagnostics.
+- Syntax verified with `py_compile`. Ready for resubmission.
+
+## 13:52 - QOS Policy Constraints Discovered
+- `--mem=200G` rejected: `QOSMaxMemoryPerJob` — reverted to `--mem=122G`.
+- `--gpus=2` rejected: `QOSMaxGRESPerJob` — reverted to `--gpus=1`.
+- Revised strategy: single A100-40GB with **conservative `max_memory={0: "20GiB", "cpu": "100GiB"}`** to prevent materialization OOM.
+
+## 13:55 - Job 6432602 Submitted (RUNNING)
+- Resubmitted `run_test_inference_27b.sbatch` with fixed memory strategy.
+- Job `6432602` (`medgemma27b-infer`) started at 13:54:47 on `gpu-interactive`.
+- Fix: `max_memory={0: "20GiB"}` forces device mapper to keep GPU usage under the 20 GiB threshold, leaving 20 GiB headroom for HF loader's transient full-precision shard staging.
+
+## 13:59 - Job 6432602 FAILED + Fix
+- **Cause**: `AttributeError: total_mem` — wrong attribute name in GPU diagnostic code.
+- Correct attribute for this PyTorch build is `total_memory` (not `total_mem`).
+- Fixed in `test_inference.py` line 84. Syntax verified.
+- Also noted: `QOSMaxSubmitJobPerUserLimit` blocks new `srun` interactive sessions while a batch job is queued/running.
+
+## 14:00 - Job 6432763 Submitted (RUNNING)
+- Resubmitted after attribute fix. Job `6432763` (`medgemma27b-infer`) accepted.
+
+## 14:02 - Job 6432763 FAILED — Root Cause Confirmed
+- **OOM again**: 38.89 GiB consumed despite `max_memory={0: "20GiB"}` cap.
+- **Root cause confirmed**: `bitsandbytes` 4-bit quantization completely ignores `max_memory` — it always stages full-precision weight shards on the target GPU before quantizing. No amount of `max_memory` tuning will fix this.
+- **Fix**: Switched to **8-bit quantization** (`load_in_8bit=True`). 8-bit uses a different code path that loads tensors directly as `int8` without a full-precision staging step. Expected GPU footprint: ~27 GB — safely within 40 GB.
+- Also removed `max_memory` cap (no longer needed).
+
+## 14:03 - Job 6432874 Submitted (8-bit quantization)
+- Resubmitted `run_test_inference_27b.sbatch` with 8-bit quantization fix.
+- Job `6432874` (`medgemma27b-infer`) accepted and queued.
+
+## 14:50 - Oxigraph RDF Knowledge Graph Setup
+- **Schema Definition**: Created `rdf_schema.py` defining eICU ontology (Hospital, Patient, Diagnosis, OrganSystem, RawDrugName, SKOS Concept).
+- **Persistent Store**: Configured `.env` with `OXIGRAPH_STORE_PATH="/N/scratch/alikh/oxigraph_store"`.
+- **ETL Implementation**: Built `build_kg.py` with 7-phase pipeline:
+    - Phase 0-6: Ontology, Hospitals, Patients, Diagnoses (de-duplicated), Organ Systems, Drugs (Meds+Infusions), and SKOS Clinical Concepts.
+- **Bug Fix**: Resolved `TypeError` by switching from `Triple` to `Quad` API for `pyoxigraph 0.5.5` compatibility.
+
+## 15:45 - Knowledge Graph Build & Verification
+- **Build Success**: Populated **53,680 triples** in 6.5 seconds.
+    - 186 Hospitals
+    - 2,520 Patients
+    - 1,091 Unique Diagnoses (de-duplicated from 25k entries)
+    - 14 Organ Systems
+    - 1,442 Raw Drug Names
+    - 385 SKOS Concepts
+- **SPARQL Interface**: Created `query_kg.py` with 10 demo queries and interactive REPL.
+- **Verification**: `test_kg.py` passed all **18 tests**, including:
+    - Entity count validation.
+    - SKOS lookup pattern: Found 326 patients for "hypertension" via mapping altLabel → prefLabel → diagnosis problem.
+    - Round-trip validation for patient 141765 (gender/hospital match).

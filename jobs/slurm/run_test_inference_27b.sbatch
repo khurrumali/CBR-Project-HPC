@@ -8,7 +8,7 @@
 #SBATCH --mem=122G
 #SBATCH --gpus=1
 #SBATCH --time=04:00:00
-#SBATCH --output=slurm-%j.out
+#SBATCH --output=logs/slurm/slurm-%j.out
 
 set -euo pipefail
 
@@ -55,5 +55,5 @@ if [[ ! -f "${MODEL_27B}/config.json" ]]; then
 fi
 
 log "Launching test_inference.py (27B only)"
-python3 -u test_inference.py
+python3 -u src/inference/test_inference.py
 log "Job completed successfully"

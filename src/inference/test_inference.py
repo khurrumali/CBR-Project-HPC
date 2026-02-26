@@ -16,7 +16,7 @@ PATIENT_ID = 141765
 OFFLOAD_DIR = "/N/scratch/alikh/models/offload"
 
 # 1. Setup Logging Directory
-os.makedirs("inference_logs", exist_ok=True)
+os.makedirs("logs/inference", exist_ok=True)
 
 
 def ensure_model_dir_ready(model_path: str) -> None:
@@ -78,28 +78,56 @@ def run_inference():
     active_model_path = primary_model_path
     ensure_model_dir_ready(primary_model_path)
     print(f"Loading model from {active_model_path}...")
+    n_gpus = torch.cuda.device_count()
+    print(f"Available GPUs: {n_gpus}")
+    for i in range(n_gpus):
+        total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+        print(f"  GPU {i}: {torch.cuda.get_device_name(i)} — {total:.1f} GiB")
     print("This may take a few minutes on the NVIDIA A100...")
 
+    # Clear any CUDA allocator fragmentation before heavy load
+    torch.cuda.empty_cache()
+
     tokenizer = AutoTokenizer.from_pretrained(primary_model_path, use_fast=False)
-    load_kwargs = {
-        "device_map": "auto",
-        "max_memory": {0: "30GiB", "cpu": "220GiB"},
-        "low_cpu_mem_usage": True,
-        "offload_folder": OFFLOAD_DIR,
-        "offload_state_dict": True,
-    }
 
     try:
         from transformers import BitsAndBytesConfig
 
-        # Prefer 4-bit load on A100-40GB; combine with max_memory/offload as a safety net.
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
+        # ---- Two-phase load to avoid HF loader OOM on 40 GB A100 ----
+        # The HF loader's materialization always stages tensors on the target
+        # device BEFORE quantizing, so any GPU-targeted load OOMs on 27B.
+        #
+        # Phase 1: load the full model in float16 onto CPU RAM (122 GB available).
+        #          No GPU is touched here — safe for any model size.
+        print("Phase 1: loading model weights into CPU RAM (float16)...")
+        model = AutoModelForCausalLM.from_pretrained(
+            primary_model_path,
+            torch_dtype=torch.float16,
+            device_map="cpu",
+            low_cpu_mem_usage=True,
         )
-        model = AutoModelForCausalLM.from_pretrained(primary_model_path, quantization_config=quantization_config, **load_kwargs)
+        print("Phase 1 complete. Quantizing and moving to GPU...")
+
+        # Phase 2: quantize in-place then dispatch to GPU.
+        # bitsandbytes' replace_with_bnb_linear works on a CPU model and converts
+        # linear layers to 8-bit, then .cuda() moves the already-small model.
+        from bitsandbytes.nn import Linear8bitLt
+        from bitsandbytes import replace_with_bnb_linear
+
+        model = replace_with_bnb_linear(
+            model,
+            modules_to_not_convert=["lm_head"],
+            quantization_config=None,
+            has_been_replaced=False,
+        )[0]
+        model = model.cuda()
+        model.eval()
+
+        # --- GPU memory diagnostics after load ---
+        for i in range(torch.cuda.device_count()):
+            alloc = torch.cuda.memory_allocated(i) / 1024**3
+            resrv = torch.cuda.memory_reserved(i) / 1024**3
+            print(f"  GPU {i} after load: {alloc:.2f} GiB allocated, {resrv:.2f} GiB reserved")
     except Exception as exc:
         if not fallback_model_path or fallback_model_path == primary_model_path:
             raise RuntimeError(f"Primary model load failed and no distinct fallback is configured: {exc}") from exc
@@ -108,7 +136,14 @@ def run_inference():
         active_model_path = fallback_model_path
         ensure_model_dir_ready(active_model_path)
         tokenizer = AutoTokenizer.from_pretrained(active_model_path, use_fast=False)
-        model = AutoModelForCausalLM.from_pretrained(active_model_path, quantization_config=quantization_config, **load_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(
+            active_model_path,
+            torch_dtype=torch.float16,
+            device_map="cpu",
+            low_cpu_mem_usage=True,
+        )
+        model = model.cuda()
+        model.eval()
     
     prompt = f"""You are a helpful medical assistant. Below is a clinical profile for a patient. 
 Translate this clinical data into a layman's report that the patient's family can understand. 
@@ -136,7 +171,7 @@ LAYMAN'S REPORT:"""
     
     # 2. Save Interaction
     model_dirname = os.path.basename(active_model_path)
-    log_dir = os.path.join("inference_logs", model_dirname)
+    log_dir = os.path.join("logs/inference", model_dirname)
     os.makedirs(log_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(log_dir, f"patient_{PATIENT_ID}_{timestamp}.txt")

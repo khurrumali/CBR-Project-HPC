@@ -8,7 +8,7 @@
 #SBATCH --mem=64G
 #SBATCH --gpus=1
 #SBATCH --time=01:00:00
-#SBATCH --output=slurm-%j.out
+#SBATCH --output=logs/slurm/slurm-%j.out
 
 set -euo pipefail
 
@@ -23,4 +23,4 @@ set +a
 module load cuda/12.6
 source venv/bin/activate
 
-python3 test_inference.py
+python3 src/inference/test_inference.py
