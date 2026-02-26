@@ -1,0 +1,32 @@
+# Database
+psycopg2-binary
+sqlalchemy
+
+# Data
+pandas
+numpy
+
+# Environment
+python-dotenv
+configobj
+
+# Knowledge Graph (OxiGraph)
+pyoxigraph
+
+# LLM Integration
+langchain
+langchain-core
+langchain-community
+langchain-google-genai
+langchain-ollama
+transformers
+torch
+accelerate
+
+# Statistical testing
+scipy
+
+# Visualization (optional)
+jupyter
+matplotlib
+seaborn
