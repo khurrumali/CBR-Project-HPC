@@ -22,6 +22,10 @@ langchain-ollama
 transformers
 torch
 accelerate
+bitsandbytes
+sentencepiece
+protobuf
+tiktoken
 
 # Statistical testing
 scipy
