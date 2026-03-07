@@ -1,16 +1,16 @@
 """
-rdf_schema.py  –  eICU RDF Ontology: namespaces, URI helpers, class/property definitions.
+rdf_schema.py  -  eICU RDF Ontology: namespaces, URI helpers, class/property definitions.
 
 Provides:
-  • Namespace constants (eicu:, data:, skos:, rdf:, rdfs:, owl:, xsd:)
-  • URI builder helpers for every entity class
-  • insert_ontology_triples(store) → inserts OWL class + property definitions
+  * Namespace constants (eicu:, data:, skos:, rdf:, rdfs:, owl:, xsd:)
+  * URI builder helpers for every entity class
+  * insert_ontology_triples(store) -> inserts OWL class + property definitions
 """
 
 import hashlib, re
 from pyoxigraph import NamedNode, Literal, Quad, DefaultGraph, Store
 
-# ── Namespace URIs ──────────────────────────────────────────────────────────
+# == Namespace URIs ==========================================================
 EICU   = "http://eicu.mit.edu/ontology/"
 DATA   = "http://eicu.mit.edu/data/"
 SKOS   = "http://www.w3.org/2004/02/skos/core#"
@@ -18,8 +18,9 @@ RDF    = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS   = "http://www.w3.org/2000/01/rdf-schema#"
 OWL    = "http://www.w3.org/2002/07/owl#"
 XSD    = "http://www.w3.org/2001/XMLSchema#"
+ICD9   = "http://purl.bioontology.org/ontology/ICD9CM/"
 
-# ── Commonly-used NamedNode shortcuts ───────────────────────────────────────
+# == Commonly-used NamedNode shortcuts =======================================
 RDF_TYPE       = NamedNode(RDF + "type")
 RDFS_LABEL     = NamedNode(RDFS + "label")
 RDFS_COMMENT   = NamedNode(RDFS + "comment")
@@ -27,7 +28,7 @@ OWL_CLASS      = NamedNode(OWL + "Class")
 OWL_DPROP      = NamedNode(OWL + "DatatypeProperty")
 OWL_OPROP      = NamedNode(OWL + "ObjectProperty")
 
-# ── eICU class nodes ────────────────────────────────────────────────────────
+# == eICU class nodes ========================================================
 CLASS_HOSPITAL     = NamedNode(EICU + "Hospital")
 CLASS_PATIENT      = NamedNode(EICU + "Patient")
 CLASS_DIAGNOSIS    = NamedNode(EICU + "Diagnosis")
@@ -35,7 +36,7 @@ CLASS_ORGAN_SYSTEM = NamedNode(EICU + "OrganSystem")
 CLASS_RAW_DRUG     = NamedNode(EICU + "RawDrugName")
 SKOS_CONCEPT       = NamedNode(SKOS + "Concept")
 
-# ── Data property predicates ────────────────────────────────────────────────
+# == Data property predicates ================================================
 EICU_BED_CATEGORY     = NamedNode(EICU + "bedCategory")
 EICU_TEACHING_STATUS  = NamedNode(EICU + "teachingStatus")
 EICU_REGION           = NamedNode(EICU + "region")
@@ -60,7 +61,7 @@ SKOS_ALT_LABEL    = NamedNode(SKOS + "altLabel")
 SKOS_BROADER      = NamedNode(SKOS + "broader")
 SKOS_EXACT_MATCH  = NamedNode(SKOS + "exactMatch")
 
-# ── Object property predicates (relationships) ─────────────────────────────
+# == Object property predicates (relationships) =============================
 EICU_ORDERED          = NamedNode(EICU + "ordered")
 EICU_ADMITTED_TO      = NamedNode(EICU + "admittedTo")
 EICU_CONFIRMED_INFUSION = NamedNode(EICU + "confirmedInfusion")
@@ -68,7 +69,7 @@ EICU_HAS_DIAGNOSIS    = NamedNode(EICU + "hasDiagnosis")
 EICU_BELONGS_TO       = NamedNode(EICU + "belongsTo")
 
 
-# ── URI builder helpers ─────────────────────────────────────────────────────
+# == URI builder helpers =====================================================
 
 def _slug(text: str) -> str:
     """Normalise a free-text label into a URL-safe slug."""
@@ -97,8 +98,19 @@ def drug_uri(drugname: str) -> NamedNode:
 def concept_uri(problem: str) -> NamedNode:
     return NamedNode(f"{DATA}concept/{_slug(problem)}")
 
+def category_uri(category: str) -> NamedNode:
+    return NamedNode(f"{DATA}category/{_slug(category)}")
 
-# ── Typed literal helpers ───────────────────────────────────────────────────
+def detail_uri(detail: str) -> NamedNode:
+    return NamedNode(f"{DATA}detail/{_slug(detail)}")
+
+def icd9_uri(code: str) -> NamedNode:
+    # Clean code: remove dots for standard bioontology format if needed, 
+    # but eICU codes usually don't have them or they are consistent.
+    return NamedNode(f"{ICD9}{code}")
+
+
+# == Typed literal helpers ===================================================
 
 def xsd_string(val: str) -> Literal:
     return Literal(val, datatype=NamedNode(XSD + "string"))
@@ -113,7 +125,7 @@ def xsd_boolean(val: bool) -> Literal:
     return Literal("true" if val else "false", datatype=NamedNode(XSD + "boolean"))
 
 
-# ── Ontology bootstrap ─────────────────────────────────────────────────────
+# == Ontology bootstrap =====================================================
 
 def insert_ontology_triples(store: Store) -> int:
     """Insert OWL class and property definitions into the store.  Returns triple count."""
@@ -162,7 +174,7 @@ def insert_ontology_triples(store: Store) -> int:
     return len(quads)
 
 
-# ── SPARQL prefix header (for queries) ──────────────────────────────────────
+# == SPARQL prefix header (for queries) ======================================
 
 SPARQL_PREFIXES = """
 PREFIX eicu: <http://eicu.mit.edu/ontology/>

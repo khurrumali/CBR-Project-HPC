@@ -1,0 +1,255 @@
+[
+  {
+    "case_id": "426976",
+    "score": 0.6967,
+    "age": 69,
+    "gender": "Male",
+    "details": {
+      "diagnosis_match": 0.5,
+      "age_similarity": 0.87,
+      "case_completeness": 0.67,
+      "active_organ_support": [
+        "mechanical_ventilation",
+        "vasopressor_use"
+      ],
+      "severity_flags": [
+        "hypotension (MAP<65)",
+        "tachypnea (RR>30)",
+        "hypoxemia (SpO2<90)",
+        "hypothermia (T<36)",
+        "altered mental status (GCS=-3)",
+        "mechanical ventilation",
+        "vasopressor use (Norepinephrine)"
+      ]
+    },
+    "source_case": {
+      "metadata": {
+        "dataset": "eicu-crd-demo-2.0.1",
+        "case_type": "icu_triage",
+        "created_for": "cbr_triage_library",
+        "patient_unit_stay_id": 426976,
+        "first_24h_window_min": "0-1440",
+        "created_at": "2026-03-04T20:54:56.492284+00:00",
+        "sections_populated": {
+          "demographics": true,
+          "comorbidities": true,
+          "acute_physiology_24h": true,
+          "key_labs_24h": true,
+          "organ_support": true,
+          "code_status": true,
+          "icu_los": true,
+          "apache": true,
+          "triage_context": true
+        }
+      },
+      "demographics": {
+        "age": 69,
+        "age_raw": "69",
+        "age_group": "65-79",
+        "gender": "Male",
+        "ethnicity": "Hispanic",
+        "admitting_diagnosis": "No",
+        "primary_diagnosis_string": "pulmonary|pulmonary infections|pneumonia",
+        "apache_admission_dx": "Pneumonia, bacterial",
+        "unit_type": "Med-Surg ICU",
+        "unit_admit_source": "Emergency Department",
+        "hospital_admit_source": "Emergency Department"
+      },
+      "comorbidities": {
+        "flags": {
+          "chf": false,
+          "copd": true,
+          "ckd": false,
+          "cirrhosis": false,
+          "immunosuppression": false,
+          "cancer": false
+        },
+        "evidence": {
+          "chf": [],
+          "copd": [
+            "COPD"
+          ],
+          "ckd": [],
+          "cirrhosis": [],
+          "immunosuppression": [],
+          "cancer": []
+        },
+        "any_comorbidity": true,
+        "comorbidity_count": 1
+      },
+      "acute_physiology_24h": {
+        "map": {
+          "value": 58.0,
+          "hypotension_flag": true,
+          "source": "vitalAperiodic.noninvasivemean"
+        },
+        "heart_rate": {
+          "value": 89.0,
+          "tachycardia_flag": false
+        },
+        "respiratory_rate": {
+          "value": 32.0,
+          "tachypnea_flag": true
+        },
+        "oxygenation": {
+          "spo2_min": 88.0,
+          "fio2_max": 0.5,
+          "pao2_fio2_ratio": 193.2,
+          "hypoxemia_flag": true
+        },
+        "temperature": {
+          "max_value": 35.9,
+          "min_value": 35.9,
+          "fever_flag": false,
+          "hypothermia_flag": true
+        },
+        "gcs": {
+          "total": -3,
+          "eyes": -1,
+          "verbal": -1,
+          "motor": -1,
+          "ams_flag": true
+        },
+        "data_source": [
+          "vitalPeriodic",
+          "vitalAperiodic",
+          "apacheApsVar"
+        ]
+      },
+      "key_labs_24h": {
+        "lactate": {
+          "value": null,
+          "elevated_flag": null,
+          "unit": "mmol/L"
+        },
+        "creatinine": {
+          "value": 1.94,
+          "renal_dysfunction_flag": false,
+          "unit": "mg/dL"
+        },
+        "platelets": {
+          "value": 232.0,
+          "thrombocytopenia_flag": false,
+          "unit": "x10^3/uL"
+        },
+        "bilirubin": {
+          "value": null,
+          "unit": "mg/dL"
+        },
+        "wbc": {
+          "value": 13.29,
+          "unit": "x10^3/uL"
+        },
+        "available_labs_24h": [
+          "BUN",
+          "Base Excess",
+          "CPK",
+          "Carboxyhemoglobin",
+          "FiO2",
+          "HCO3",
+          "Hct",
+          "Hgb",
+          "MCH",
+          "MCHC",
+          "MCV",
+          "MPV",
+          "Methemoglobin",
+          "O2 Content",
+          "O2 Sat (%)",
+          "PEEP",
+          "RBC",
+          "Respiratory Rate",
+          "TV",
+          "WBC x 1000",
+          "WBC's in urine",
+          "anion gap",
+          "bedside glucose",
+          "bicarbonate",
+          "calcium",
+          "chloride",
+          "creatinine",
+          "glucose",
+          "magnesium",
+          "pH",
+          "paCO2",
+          "paO2",
+          "platelets x 1000",
+          "potassium",
+          "sodium",
+          "troponin - I",
+          "urinary creatinine",
+          "urinary sodium",
+          "urinary specific gravity"
+        ],
+        "data_source": "lab"
+      },
+      "organ_support": {
+        "mechanical_ventilation": {
+          "flag": true,
+          "source": "apacheApsVar",
+          "details": null
+        },
+        "vasopressor_use": {
+          "flag": true,
+          "agents": [
+            "Norepinephrine"
+          ],
+          "source": "infusionDrug"
+        },
+        "dialysis": {
+          "flag": false,
+          "source": null,
+          "details": null
+        }
+      },
+      "code_status": {
+        "status": "Full therapy",
+        "full_code_flag": true,
+        "all_entries": [
+          {
+            "value": "Full therapy",
+            "offset_min": 54
+          }
+        ],
+        "source": "carePlanGeneral"
+      },
+      "icu_los": {
+        "los_hours": 185.7,
+        "los_days": 7.7,
+        "los_bucket": ">=7d",
+        "discharge_status": "Alive",
+        "hospital_discharge_status": "Expired",
+        "hospital_mortality": true
+      },
+      "apache": {
+        "apache_score": null,
+        "predicted_hospital_mortality": null,
+        "actual_icu_mortality": null,
+        "actual_hospital_mortality": null,
+        "source": null
+      },
+      "triage_context": {
+        "severity_flags": [
+          "hypotension (MAP<65)",
+          "tachypnea (RR>30)",
+          "hypoxemia (SpO2<90)",
+          "hypothermia (T<36)",
+          "altered mental status (GCS=-3)",
+          "mechanical ventilation",
+          "vasopressor use (Norepinephrine)"
+        ],
+        "severity_count": 7,
+        "apache_score": null,
+        "predicted_mortality": null,
+        "multi_institute_comparison_fields": {
+          "age_group": "65-79",
+          "gender": "Male",
+          "primary_diagnosis": "No",
+          "unit_type": "Med-Surg ICU",
+          "los_bucket": ">=7d",
+          "hospital_mortality": true
+        }
+      }
+    }
+  }
+]

@@ -16,7 +16,7 @@ srun -A r00877 -p gpu-interactive --gpus=1 --mem=64G --pty bash
 | `-A r00877` | Account | Your project billing account. |
 | `-p gpu-interactive` | Partition | Use this for testing/development (up to 4 hours). |
 | `--gpus=1` | GPUs | Requests 1 NVIDIA A100 GPU. |
-| `--mem=64G` | Memory | Requests 64GB of system RAM. |
+| `--mem=40G` | Memory | Requests 64GB of system RAM. |
 | `--pty bash` | Interactive | Opens a terminal shell inside the compute node. |
 
 ---

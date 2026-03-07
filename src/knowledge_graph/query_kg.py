@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-query_kg.py  –  SPARQL query interface to the eICU Oxigraph knowledge graph.
+query_kg.py  -  SPARQL query interface to the eICU Oxigraph knowledge graph.
 
 Usage:
     python query_kg.py                          # run all demo queries
@@ -15,7 +15,7 @@ from pyoxigraph import Store
 from rdf_schema import SPARQL_PREFIXES
 
 
-# ── Demo queries ────────────────────────────────────────────────────────────
+# == Demo queries ============================================================
 
 DEMO_QUERIES = {
     "1. Hospital count": f"""
@@ -143,14 +143,14 @@ LIMIT 15
 }
 
 
-# ── Query execution ────────────────────────────────────────────────────────
+# == Query execution ========================================================
 
 def run_query(store: Store, sparql: str, label: str = ""):
     """Execute a SPARQL query and print results as a table."""
     if label:
-        print(f"\n{'─'*60}")
+        print(f"\n{'='*60}")
         print(f"  {label}")
-        print(f"{'─'*60}")
+        print(f"{'='*60}")
 
     try:
         results = list(store.query(sparql))
@@ -164,7 +164,7 @@ def run_query(store: Store, sparql: str, label: str = ""):
 
     # Determine column names from first result
     if hasattr(results[0], '__getitem__'):
-        # QuerySolution – extract variable names from the SPARQL
+        # QuerySolution - extract variable names from the SPARQL
         import re
         vars_found = re.findall(r'SELECT\s+.*?WHERE', sparql, re.DOTALL | re.IGNORECASE)
         if vars_found:
@@ -193,7 +193,7 @@ def run_query(store: Store, sparql: str, label: str = ""):
     print(f"  ({len(results)} rows)")
 
 
-# ── Main ────────────────────────────────────────────────────────────────────
+# == Main ====================================================================
 
 def main():
     load_dotenv()

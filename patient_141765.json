@@ -1,0 +1,211 @@
+{
+  "metadata": {
+    "dataset": "eicu-crd-demo-2.0.1",
+    "case_type": "icu_triage",
+    "created_for": "cbr_triage_library",
+    "patient_unit_stay_id": 141765,
+    "first_24h_window_min": "0-1440",
+    "created_at": "2026-03-04T21:01:39.950540+00:00",
+    "sections_populated": {
+      "demographics": true,
+      "comorbidities": true,
+      "acute_physiology_24h": true,
+      "key_labs_24h": true,
+      "organ_support": true,
+      "code_status": true,
+      "icu_los": true,
+      "apache": true,
+      "triage_context": true
+    }
+  },
+  "demographics": {
+    "age": 87,
+    "age_raw": "87",
+    "age_group": "80+",
+    "gender": "Female",
+    "ethnicity": "Caucasian",
+    "admitting_diagnosis": "Rhythm disturbance (atrial, supraventricular)",
+    "primary_diagnosis_string": null,
+    "apache_admission_dx": "Rhythm disturbance (atrial, supraventricular)",
+    "unit_type": "Med-Surg ICU",
+    "unit_admit_source": "Emergency Department",
+    "hospital_admit_source": null
+  },
+  "comorbidities": {
+    "flags": {
+      "chf": false,
+      "copd": false,
+      "ckd": false,
+      "cirrhosis": false,
+      "immunosuppression": false,
+      "cancer": false
+    },
+    "evidence": {
+      "chf": [],
+      "copd": [],
+      "ckd": [],
+      "cirrhosis": [],
+      "immunosuppression": [],
+      "cancer": []
+    },
+    "any_comorbidity": false,
+    "comorbidity_count": 0
+  },
+  "acute_physiology_24h": {
+    "map": {
+      "value": 75.0,
+      "hypotension_flag": false,
+      "source": "vitalAperiodic.noninvasivemean"
+    },
+    "heart_rate": {
+      "value": 116.0,
+      "tachycardia_flag": false
+    },
+    "respiratory_rate": {
+      "value": 39.0,
+      "tachypnea_flag": true
+    },
+    "oxygenation": {
+      "spo2_min": 95.0,
+      "fio2_max": null,
+      "pao2_fio2_ratio": null,
+      "hypoxemia_flag": false
+    },
+    "temperature": {
+      "max_value": 36.2,
+      "min_value": 36.2,
+      "fever_flag": false,
+      "hypothermia_flag": false
+    },
+    "gcs": {
+      "total": 15,
+      "eyes": null,
+      "verbal": null,
+      "motor": null,
+      "ams_flag": false
+    },
+    "data_source": [
+      "vitalPeriodic",
+      "vitalAperiodic",
+      "nurseCharting_GCS",
+      "apacheApsVar"
+    ]
+  },
+  "key_labs_24h": {
+    "lactate": {
+      "value": null,
+      "elevated_flag": null,
+      "unit": "mmol/L"
+    },
+    "creatinine": {
+      "value": 1.04,
+      "renal_dysfunction_flag": false,
+      "unit": "mg/dL"
+    },
+    "platelets": {
+      "value": 191.0,
+      "thrombocytopenia_flag": false,
+      "unit": "x10^3/uL"
+    },
+    "bilirubin": {
+      "value": null,
+      "unit": "mg/dL"
+    },
+    "wbc": {
+      "value": 10.2,
+      "unit": "x10^3/uL"
+    },
+    "available_labs_24h": [
+      "-basos",
+      "-eos",
+      "-lymphs",
+      "-monos",
+      "-polys",
+      "BUN",
+      "Hct",
+      "Hgb",
+      "MCH",
+      "MCHC",
+      "MCV",
+      "RBC",
+      "RDW",
+      "WBC x 1000",
+      "anion gap",
+      "bedside glucose",
+      "bicarbonate",
+      "calcium",
+      "chloride",
+      "creatinine",
+      "glucose",
+      "platelets x 1000",
+      "potassium",
+      "sodium",
+      "troponin - I",
+      "urinary specific gravity"
+    ],
+    "data_source": "lab"
+  },
+  "organ_support": {
+    "mechanical_ventilation": {
+      "flag": false,
+      "source": null,
+      "details": null
+    },
+    "vasopressor_use": {
+      "flag": false,
+      "agents": [],
+      "source": "medication"
+    },
+    "dialysis": {
+      "flag": false,
+      "source": null,
+      "details": null
+    }
+  },
+  "code_status": {
+    "status": "Do not resuscitate",
+    "full_code_flag": false,
+    "all_entries": [
+      {
+        "value": "Full therapy",
+        "offset_min": 14
+      },
+      {
+        "value": "Do not resuscitate",
+        "offset_min": 228
+      }
+    ],
+    "source": "carePlanGeneral"
+  },
+  "icu_los": {
+    "los_hours": 37.5,
+    "los_days": 1.6,
+    "los_bucket": "<3d",
+    "discharge_status": "Alive",
+    "hospital_discharge_status": "Alive",
+    "hospital_mortality": false
+  },
+  "apache": {
+    "apache_score": 47.0,
+    "predicted_hospital_mortality": 0.03731994885637376,
+    "actual_icu_mortality": "ALIVE",
+    "actual_hospital_mortality": "ALIVE",
+    "source": "apachePatientResult"
+  },
+  "triage_context": {
+    "severity_flags": [
+      "tachypnea (RR>30)"
+    ],
+    "severity_count": 1,
+    "apache_score": 47.0,
+    "predicted_mortality": 0.03731994885637376,
+    "multi_institute_comparison_fields": {
+      "age_group": "80+",
+      "gender": "Female",
+      "primary_diagnosis": "Rhythm disturbance (atrial, supraventricular)",
+      "unit_type": "Med-Surg ICU",
+      "los_bucket": "<3d",
+      "hospital_mortality": false
+    }
+  }
+}

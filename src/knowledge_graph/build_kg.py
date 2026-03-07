@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-build_kg.py  –  ETL pipeline: eICU SQLite  →  Oxigraph RDF Knowledge Graph.
+build_kg.py  –  ETL pipeline: eICU SQLite  ->  Oxigraph RDF Knowledge Graph.
 
 Usage:
     python build_kg.py              # full build (creates / replaces store)
@@ -35,7 +35,7 @@ from rdf_schema import (
     # Helpers
     RDF_TYPE, RDFS_LABEL,
     hospital_uri, patient_uri, diagnosis_uri,
-    organ_system_uri, drug_uri, concept_uri,
+    organ_system_uri, drug_uri, concept_uri, category_uri, detail_uri, icd9_uri,
     xsd_string, xsd_integer, xsd_float, xsd_boolean,
     insert_ontology_triples, SPARQL_PREFIXES,
 )
@@ -49,7 +49,7 @@ def _parse_age(raw: str | None) -> int | None:
         return None
     raw = raw.strip()
     if raw.startswith(">"):
-        return 90          # convention: "> 89" → 90
+        return 90          # convention: "> 89" -> 90
     try:
         return int(raw)
     except ValueError:
@@ -84,7 +84,7 @@ def _t(s, p, o) -> Quad:
 # ── Phase loaders ───────────────────────────────────────────────────────────
 
 def load_hospitals(store: Store, conn: sqlite3.Connection) -> int:
-    """Phase 1: hospitals → eicu:Hospital nodes."""
+    """Phase 1: hospitals -> eicu:Hospital nodes."""
     cur = conn.cursor()
     cur.execute("SELECT hospitalid, numbedscategory, teachingstatus, region FROM hospital")
     triples = []
@@ -102,7 +102,7 @@ def load_hospitals(store: Store, conn: sqlite3.Connection) -> int:
 
 
 def load_patients(store: Store, conn: sqlite3.Connection) -> int:
-    """Phase 2: patients → eicu:Patient nodes + admittedTo edges."""
+    """Phase 2: patients -> eicu:Patient nodes + admittedTo edges."""
     cur = conn.cursor()
     cur.execute("""
         SELECT p.patientunitstayid, p.age, p.gender, p.ethnicity,
@@ -141,11 +141,7 @@ def load_patients(store: Store, conn: sqlite3.Connection) -> int:
     return _bulk_add(store, triples)
 
 
-def load_diagnoses(store: Store, conn: sqlite3.Connection) -> tuple[int, set, dict]:
-    """Phase 3: diagnoses → eicu:Diagnosis nodes + edges.
-
-    Also collects organ systems and concept material for later phases.
-    Returns (triple_count, organ_system_names, concept_map).
+    Returns (triple_count, organ_system_names, diagnosis_set).
     """
     cur = conn.cursor()
     cur.execute("""
@@ -155,10 +151,8 @@ def load_diagnoses(store: Store, conn: sqlite3.Connection) -> tuple[int, set, di
     """)
     triples = []
     organ_systems: set[str] = set()
-    # concept_map: problem → {icd9_codes, categories, organ_systems}
-    concept_map: dict[str, dict] = defaultdict(lambda: {
-        "icd9_codes": set(), "categories": set(), "organ_systems": set()
-    })
+    # diagnosis_set: set of (diag_string, icd9)
+    diagnosis_set: set[tuple[str, str | None]] = set()
 
     for did, stayid, dstr, icd9, priority in cur:
         if not dstr:
@@ -174,57 +168,50 @@ def load_diagnoses(store: Store, conn: sqlite3.Connection) -> tuple[int, set, di
         if parts["organ_system"]:
             triples.append(_t(d_uri, EICU_ORGAN_SYSTEM_NAME, xsd_string(parts["organ_system"])))
             organ_systems.add(parts["organ_system"])
-            # belongsTo edge
+            # belongsTo edge (legacy)
             triples.append(_t(d_uri, EICU_BELONGS_TO, organ_system_uri(parts["organ_system"])))
-        if parts["category"]:
-            triples.append(_t(d_uri, EICU_CATEGORY, xsd_string(parts["category"])))
-        if parts["problem"]:
-            triples.append(_t(d_uri, EICU_PROBLEM, xsd_string(parts["problem"])))
-        if parts["detail"]:
-            triples.append(_t(d_uri, EICU_DETAIL, xsd_string(parts["detail"])))
-        if parts["qualifier"]:
-            triples.append(_t(d_uri, EICU_QUALIFIER, xsd_string(parts["qualifier"])))
+        
+        # ... rest of literal properties ...
+        if parts["category"]: triples.append(_t(d_uri, EICU_CATEGORY, xsd_string(parts["category"])))
+        if parts["problem"]:  triples.append(_t(d_uri, EICU_PROBLEM, xsd_string(parts["problem"])))
+        if parts["detail"]:   triples.append(_t(d_uri, EICU_DETAIL, xsd_string(parts["detail"])))
+        if parts["qualifier"]:triples.append(_t(d_uri, EICU_QUALIFIER, xsd_string(parts["qualifier"])))
 
         # hasDiagnosis edge
         triples.append(_t(patient_uri(stayid), EICU_HAS_DIAGNOSIS, d_uri))
 
-        # diagnosisPriority (attached to patient→diagnosis via reification-lite)
+        # diagnosisPriority
         if priority:
             triples.append(_t(d_uri, EICU_DIAGNOSIS_PRIORITY, xsd_string(priority)))
 
-        # Accumulate concept material
-        if parts["problem"]:
-            cm = concept_map[parts["problem"]]
-            if icd9:
-                cm["icd9_codes"].add(icd9)
-            if parts["category"]:
-                cm["categories"].add(parts["category"])
-            if parts["organ_system"]:
-                cm["organ_systems"].add(parts["organ_system"])
+        # Collect for SKOS phase
+        diagnosis_set.add((dstr, icd9))
 
     count = _bulk_add(store, triples)
-    return count, organ_systems, dict(concept_map)
+    return count, organ_systems, diagnosis_set
 
 
 def load_organ_systems(store: Store, organ_systems: set[str]) -> int:
-    """Phase 4: organ systems → eicu:OrganSystem nodes."""
+    """Phase 4: organ systems -> eicu:OrganSystem nodes."""
     triples = []
     for name in sorted(organ_systems):
         uri = organ_system_uri(name)
         triples.append(_t(uri, RDF_TYPE, CLASS_ORGAN_SYSTEM))
+        triples.append(_t(uri, RDF_TYPE, SKOS_CONCEPT)) # SKOS!
         triples.append(_t(uri, RDFS_LABEL, xsd_string(name)))
+        triples.append(_t(uri, SKOS_PREF_LABEL, xsd_string(name)))
     return _bulk_add(store, triples)
 
 
 def load_drugs(store: Store, conn: sqlite3.Connection) -> int:
-    """Phase 5: medication + infusiondrug → eicu:RawDrugName nodes + edges."""
+    """Phase 5: medication + infusiondrug -> eicu:RawDrugName nodes + edges."""
     triples = []
     seen_drugs: set[str] = set()
 
     # --- Medications (ordered drugs) ---
     cur = conn.cursor()
     cur.execute("SELECT patientunitstayid, drugname FROM medication WHERE drugname IS NOT NULL")
-    # Also track hospital→drug via patient→hospital
+    # Also track hospital->drug via patient->hospital
     cur2 = conn.cursor()
     cur2.execute("SELECT patientunitstayid, hospitalid FROM patient")
     patient_hospital = {r[0]: r[1] for r in cur2}
@@ -245,13 +232,13 @@ def load_drugs(store: Store, conn: sqlite3.Connection) -> int:
         if hid is not None:
             hospital_drugs[hid].add(dname)
 
-    # Add hospital→drug ordered edges
+    # Add hospital->drug ordered edges
     for hid, drugs in hospital_drugs.items():
         h_uri = hospital_uri(hid)
         for dname in drugs:
             triples.append(_t(h_uri, EICU_ORDERED, drug_uri(dname)))
 
-    # --- Infusion drugs  → confirmedInfusion edges ---
+    # --- Infusion drugs  -> confirmedInfusion edges ---
     cur.execute("SELECT patientunitstayid, drugname FROM infusiondrug WHERE drugname IS NOT NULL")
     for stayid, dname in cur:
         dname = dname.strip()
@@ -267,43 +254,64 @@ def load_drugs(store: Store, conn: sqlite3.Connection) -> int:
     return _bulk_add(store, triples)
 
 
-def load_skos_concepts(store: Store, concept_map: dict) -> int:
-    """Phase 6: SKOS clinical concept layer for ontology lookup.
+def load_skos_concepts(store: Store, diagnosis_set: set[tuple[str, str | None]]) -> int:
+    """Phase 6: Hierarchical SKOS clinical concept layer.
 
-    Each unique 'problem' from diagnoses becomes a skos:Concept with:
-      - prefLabel = problem name
-      - altLabel  = category names + transformed keywords
-      - broader   = organ system URIs
-      - exactMatch= ICD-9 codes
+    Builds hierarchy: Organ System > Category > Problem > Detail (with optional Qualifier).
     """
     triples = []
+    seen = set() # track URIs already defined
 
-    for problem, info in concept_map.items():
-        c_uri = concept_uri(problem)
-        triples.append(_t(c_uri, RDF_TYPE, SKOS_CONCEPT))
-        triples.append(_t(c_uri, SKOS_PREF_LABEL, xsd_string(problem)))
+    for dstr, icd9 in diagnosis_set:
+        parts = _parse_diag_parts(dstr)
+        
+        # 1. Organ System (level already defined in Phase 4, but we link to it)
+        os_name = parts["organ_system"]
+        if not os_name: continue
+        os_uri = organ_system_uri(os_name)
 
-        # altLabels: the categories serve as broader textual synonyms
-        for cat in info["categories"]:
-            triples.append(_t(c_uri, SKOS_ALT_LABEL, xsd_string(cat)))
+        # 2. Category
+        cat_name = parts["category"]
+        if cat_name:
+            cat_uri = category_uri(cat_name)
+            if cat_uri not in seen:
+                triples.append(_t(cat_uri, RDF_TYPE, SKOS_CONCEPT))
+                triples.append(_t(cat_uri, SKOS_PREF_LABEL, xsd_string(cat_name)))
+                triples.append(_t(cat_uri, SKOS_BROADER, os_uri))
+                seen.add(cat_uri)
+            parent_uri = cat_uri
+        else:
+            parent_uri = os_uri
 
-        # Also add lowercase / keyword variants of the problem itself
-        keywords = set()
-        # split on spaces + punctuation for keyword variants
-        for word in re.split(r"[\s/,\-()]+", problem):
-            w = word.strip().lower()
-            if len(w) > 2:
-                keywords.add(w)
-        for kw in keywords:
-            triples.append(_t(c_uri, SKOS_ALT_LABEL, xsd_string(kw)))
+        # 3. Problem
+        prob_name = parts["problem"]
+        if prob_name:
+            prob_uri = concept_uri(prob_name)
+            if prob_uri not in seen:
+                triples.append(_t(prob_uri, RDF_TYPE, SKOS_CONCEPT))
+                triples.append(_t(prob_uri, SKOS_PREF_LABEL, xsd_string(prob_name)))
+                triples.append(_t(prob_uri, SKOS_BROADER, parent_uri))
+                if icd9:
+                    triples.append(_t(prob_uri, SKOS_EXACT_MATCH, icd9_uri(icd9)))
+                seen.add(prob_uri)
+            parent_uri = prob_uri
 
-        # broader → organ system(s)
-        for os_name in info["organ_systems"]:
-            triples.append(_t(c_uri, SKOS_BROADER, organ_system_uri(os_name)))
-
-        # exactMatch → ICD-9 codes
-        for code in info["icd9_codes"]:
-            triples.append(_t(c_uri, SKOS_EXACT_MATCH, xsd_string(code)))
+        # 4. Detail / Qualifier
+        # We combine Detail + Qualifier for the leaf concept if present
+        leaf_parts = []
+        if parts["detail"]: leaf_parts.append(parts["detail"])
+        if parts["qualifier"]: leaf_parts.append(parts["qualifier"])
+        
+        if leaf_parts:
+            leaf_label = " ".join(leaf_parts)
+            # URI depends on the full string for leaf uniqueness
+            leaf_uri = detail_uri(dstr) 
+            if leaf_uri not in seen:
+                triples.append(_t(leaf_uri, RDF_TYPE, SKOS_CONCEPT))
+                triples.append(_t(leaf_uri, SKOS_PREF_LABEL, xsd_string(leaf_label)))
+                triples.append(_t(leaf_uri, SKOS_BROADER, parent_uri))
+                triples.append(_t(leaf_uri, EICU_DIAGNOSIS_STRING, xsd_string(dstr)))
+                seen.add(leaf_uri)
 
     return _bulk_add(store, triples)
 
@@ -372,7 +380,7 @@ def main():
     t0    = time.time()
 
     print("╔══════════════════════════════════════════════════════╗")
-    print("║  eICU → Oxigraph RDF Knowledge Graph Builder        ║")
+    print("║  eICU -> Oxigraph RDF Knowledge Graph Builder        ║")
     print("╠══════════════════════════════════════════════════════╣")
     print(f"║  DB path   : {db_path}")
     print(f"║  Store path: {store_path}")
@@ -390,8 +398,8 @@ def main():
     t = load_patients(store, conn)
     print(f"  [2] Patients                   : {t:>8,} triples")
 
-    # Phase 3: Diagnoses (also collects organ systems + concept material)
-    t, organ_systems, concept_map = load_diagnoses(store, conn)
+    # Phase 3: Diagnoses (also collects organ systems + diagnosis set)
+    t, organ_systems, diagnosis_set = load_diagnoses(store, conn)
     print(f"  [3] Diagnoses                  : {t:>8,} triples")
 
     # Phase 4: Organ Systems
@@ -402,8 +410,8 @@ def main():
     t = load_drugs(store, conn)
     print(f"  [5] Drugs (meds + infusions)   : {t:>8,} triples")
 
-    # Phase 6: SKOS Concepts
-    t = load_skos_concepts(store, concept_map)
+    # Phase 6: Hierarchical SKOS Concepts
+    t = load_skos_concepts(store, diagnosis_set)
     print(f"  [6] SKOS Clinical Concepts     : {t:>8,} triples")
 
     elapsed = time.time() - t0
