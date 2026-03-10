@@ -914,8 +914,7 @@ def build_triage_case(patient_id):
     try:
         patient_row = fetch_patient(conn, patient_id)
         if not patient_row:
-            print(f"ERROR: patientunitstayid {patient_id} not found.", file=sys.stderr)
-            sys.exit(1)
+            raise ValueError(f"patientunitstayid {patient_id} not found in database.")
 
         # Build all sections
         metadata = build_metadata(patient_id)
@@ -980,7 +979,11 @@ def main():
     )
     args = parser.parse_args()
 
-    case = build_triage_case(args.patientunitstayid)
+    try:
+        case = build_triage_case(args.patientunitstayid)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
     json_str = json.dumps(case, indent=2, ensure_ascii=False)
 
     if args.output:

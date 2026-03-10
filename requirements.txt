@@ -1,6 +1,5 @@
-# Database
-psycopg2-binary
-sqlalchemy
+# Database (SQLite used directly via stdlib; pyoxigraph for RDF store)
+pyoxigraph
 
 # Data
 pandas
@@ -10,27 +9,21 @@ numpy
 python-dotenv
 configobj
 
-# Knowledge Graph (OxiGraph)
-pyoxigraph
-
-# LLM Integration
-langchain
-langchain-core
-langchain-community
-langchain-google-genai
-langchain-ollama
+# LLM Inference
 transformers
 torch
 accelerate
 bitsandbytes
 sentencepiece
 protobuf
-tiktoken
+
+# MCP Server
+fastmcp
 
 # Statistical testing
 scipy
 
-# Visualization (optional)
+# Visualization / notebooks (optional)
 jupyter
 matplotlib
 seaborn

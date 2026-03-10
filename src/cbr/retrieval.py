@@ -6,14 +6,23 @@ Oxigraph RDF Knowledge Graph to find candidate patients and then ranking them
 using a composite similarity score.
 
 The patientunitstayid is used as the canonical case_id.
+
+Similarity dimensions (v2):
+  - Diagnosis token overlap   (0.28) — Jaccard over tokenized diagnosis text
+  - Age closeness             (0.25) — linear decay over ±30 years
+  - Comorbidity overlap       (0.20) — Jaccard over active comorbidity flags
+  - Severity alignment        (0.15) — candidate severity flag richness
+  - Gender match              (0.07) — exact match bonus
+  - APACHE score proximity    (0.05) — closeness over ±30 APACHE points
 """
 
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +90,7 @@ def _find_candidates_by_problem(
     *,
     age: Optional[int] = None,
     age_tolerance: int = 15,
-    limit: int = 50,
+    limit: int = 200,
 ) -> List[Dict[str, Any]]:
     """Query the KG for patients matching a clinical problem keyword via SKOS concepts."""
     keyword_lower = problem_keyword.strip().lower()
@@ -159,15 +168,13 @@ LIMIT {limit}
 
 
 def _fallback_diagnosis_search(
-    store, keyword_lower, *, age=None, age_tolerance=15, limit=50
+    store, keyword_lower, *, age=None, age_tolerance=15, limit=200
 ):
-    """Search diagnosis strings directly."""
+    """Search full diagnosisString directly when problem-level match fails."""
     age_filter = ""
     if age is not None:
         low, high = max(0, age - age_tolerance), age + age_tolerance
-        age_filter = (
-            f"?pat eicu:age ?patAge . FILTER(?patAge >= {low} && ?patAge <= {high})"
-        )
+        age_filter = f"FILTER(!BOUND(?patAge) || (?patAge >= {low} && ?patAge <= {high}))"
 
     sparql = f"""
 {_SPARQL_PREFIXES}
@@ -178,9 +185,9 @@ WHERE {{
     FILTER(CONTAINS(LCASE(STR(?diagStr)), "{keyword_lower}"))
     ?pat rdf:type eicu:Patient ;
          eicu:hasDiagnosis ?diag .
+    OPTIONAL {{ ?pat eicu:age ?patAge . }}
+    OPTIONAL {{ ?pat eicu:gender ?patGender . }}
     {age_filter}
-    OPTIONAL {{ ?pat eicu:age ?patAge }}
-    OPTIONAL {{ ?pat eicu:gender ?patGender }}
 }}
 LIMIT {limit}
 """
@@ -188,24 +195,76 @@ LIMIT {limit}
     candidates = []
     seen = set()
     for row in results:
-        pat_uri = str(row["pat"].value)
-        stayid = pat_uri.rsplit("/", 1)[-1]
-        if stayid in seen:
+        try:
+            pat_uri = str(row["pat"].value)
+            stayid = pat_uri.rsplit("/", 1)[-1]
+            if stayid in seen:
+                continue
+            seen.add(stayid)
+            try:
+                p_age = int(row["patAge"].value) if row["patAge"] is not None else None
+            except Exception:
+                p_age = None
+            try:
+                p_gender = str(row["patGender"].value) if row["patGender"] is not None else None
+            except Exception:
+                p_gender = None
+            try:
+                p_problem = str(row["diagStr"].value) if row["diagStr"] is not None else ""
+            except Exception:
+                p_problem = ""
+            candidates.append(
+                {
+                    "stayid": stayid,
+                    "age": p_age,
+                    "gender": p_gender,
+                    "matched_problem": p_problem,
+                }
+            )
+        except Exception:
             continue
-        seen.add(stayid)
-        candidates.append(
-            {
-                "stayid": stayid,
-                "age": int(row["patAge"].value) if row["patAge"] else None,
-                "gender": str(row["patGender"].value) if row["patGender"] else None,
-                "matched_problem": str(row["diagStr"].value) if row["diagStr"] else "",
-            }
-        )
     return candidates
 
 
 # ---------------------------------------------------------------------------
-# Similarity Scoring logic
+# Case Library candidate source
+# ---------------------------------------------------------------------------
+
+
+def _retrieve_from_case_library(problem_keyword: str) -> List[Dict[str, Any]]:
+    """
+    Search the CaseLibrary for previously solved cases matching the problem keyword.
+    Returns hydrated case dicts tagged with '_from_library': True.
+    """
+    try:
+        from src.cbr.case_library import CaseLibrary
+        lib = CaseLibrary()
+        if lib.count() == 0:
+            return []
+
+        keyword_lower = problem_keyword.strip().lower()
+        matched = []
+        for case in lib.all_cases():
+            problem = case.get("problem") or {}
+            # Match against stored problem text fields
+            searchable = " ".join([
+                str(problem.get("problem", "")),
+                str(problem.get("admitting_diagnosis", "")),
+                str(problem.get("primary_diagnosis_string", "")),
+            ]).lower()
+            if keyword_lower in searchable:
+                # Reconstruct a candidate dict from stored problem representation
+                solution = case.get("solution") or {}
+                candidate = {**solution, "_from_library": True, "_case_id": case["case_id"]}
+                matched.append(candidate)
+        return matched
+    except Exception as exc:
+        logger.debug("CaseLibrary lookup skipped: %s", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Similarity helpers
 # ---------------------------------------------------------------------------
 
 
@@ -218,24 +277,117 @@ def _numeric_closeness(
     return max(0.0, 1.0 - min(abs(float(a) - float(b)), max_diff) / max_diff)
 
 
+def _token_overlap(a: str, b: str) -> float:
+    """
+    Jaccard token overlap between two clinical text strings.
+    Strips punctuation, lowercases, splits on whitespace.
+    Returns 0.0 if either string is empty after tokenization.
+    """
+    def tokenize(s: str) -> Set[str]:
+        return set(re.sub(r"[^\w\s]", " ", s.lower()).split())
+
+    tokens_a = tokenize(a)
+    tokens_b = tokenize(b)
+    if not tokens_a or not tokens_b:
+        return 0.0
+    intersection = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(intersection) / len(union)
+
+
+def _comorbidity_jaccard(
+    query_flags: Optional[Set[str]],
+    candidate_case: Dict[str, Any],
+) -> float:
+    """
+    Jaccard overlap between query comorbidity flags and candidate flags.
+
+    - If query_flags is None (unknown), returns 0.0 (no contribution).
+    - If both sets are empty (both healthy), returns 1.0 (perfect match).
+    - Otherwise returns intersection / union.
+    """
+    if query_flags is None:
+        return 0.0  # query comorbidities unknown — skip this dimension
+
+    cand_comorbs = candidate_case.get("comorbidities", {})
+    if isinstance(cand_comorbs, dict):
+        cand_flags = {k for k, v in cand_comorbs.get("flags", {}).items() if v}
+    else:
+        cand_flags = set()
+
+    if not query_flags and not cand_flags:
+        return 1.0  # both healthy — perfect comorbidity match
+    if not query_flags or not cand_flags:
+        return 0.0
+    intersection = query_flags & cand_flags
+    union = query_flags | cand_flags
+    return len(intersection) / len(union)
+
+
+def _severity_richness(candidate_case: Dict[str, Any]) -> float:
+    """
+    Normalize candidate severity flag count to [0, 1].
+    More severity flags → richer, more acute case → higher score.
+    Uses triage_context.severity_count if available, else counts organ supports.
+    Scale: 0 flags = 0.0, 4+ flags = 1.0.
+    """
+    triage = candidate_case.get("triage_context", {})
+    count = triage.get("severity_count")
+    if count is not None:
+        return min(1.0, count / 4.0)
+
+    # Fallback: count active organ supports
+    organ_support = candidate_case.get("organ_support", {})
+    active = sum(
+        1 for v in organ_support.values()
+        if (isinstance(v, bool) and v) or (isinstance(v, dict) and v.get("flag"))
+    )
+    return min(1.0, active / 3.0)
+
+
+# ---------------------------------------------------------------------------
+# Similarity Scoring logic
+# ---------------------------------------------------------------------------
+
+
 def compute_similarity(
     query_age: int,
     query_problem: str,
     candidate_case: Dict[str, Any],
     *,
-    w_diag: float = 0.30,
-    w_age: float = 0.40,
-    w_completeness: float = 0.30,
+    query_gender: Optional[str] = None,
+    query_comorbidity_flags: Optional[Set[str]] = None,
+    w_diag: float = 0.28,
+    w_age: float = 0.25,
+    w_comorbidities: float = 0.20,
+    w_severity: float = 0.15,
+    w_gender: float = 0.07,
+    w_apache: float = 0.05,
 ) -> SimilarityResult:
-    """Score a candidate case against the query."""
-    # 1. Age Score
-    # Triage cases store age in 'demographics' -> 'age'
-    # Fallback to 'patient' -> 'demographics' -> 'age' for old generic cases
-    cand_age = candidate_case.get("demographics", {}).get("age")
+    """
+    Score a candidate case against the query using six clinical dimensions.
+
+    Parameters
+    ----------
+    query_age : int
+        Age of the query patient.
+    query_problem : str
+        Primary clinical problem/diagnosis string for the query patient.
+    candidate_case : dict
+        Full triage case JSON from build_triage_case().
+    query_gender : str, optional
+        Gender of the query patient ('Male'/'Female'). If None, gender dim is neutral.
+    query_comorbidity_flags : set of str, optional
+        Active comorbidity flag names for the query patient (e.g. {'chf', 'ckd'}).
+        If None, comorbidity dimension contributes 0.
+    """
+    demo = candidate_case.get("demographics", {})
+
+    # ── 1. Age Score ──────────────────────────────────────────────────────────
+    cand_age = demo.get("age")
     if cand_age is None:
+        # Legacy case structure fallback
         cand_age = candidate_case.get("patient", {}).get("demographics", {}).get("age")
-    
-    # Ensure numerical comparison
     try:
         if isinstance(cand_age, str) and ">" in cand_age:
             cand_age = 90
@@ -246,54 +398,108 @@ def compute_similarity(
 
     age_sim = _numeric_closeness(float(query_age), cand_age, max_diff=30.0)
 
-    # 2. Diagnosis/Problem Match (Checking if problem appears in comorbidities)
-    # Triage cases have 'comorbidities' list
-    cand_comorbs = candidate_case.get("comorbidities", [])
-    if isinstance(cand_comorbs, list):
-        comorb_text = " ".join([str(c).lower() for c in cand_comorbs])
+    # ── 2. Diagnosis Token-Overlap Score ──────────────────────────────────────
+    # Build a candidate diagnosis text blob from all diagnosis fields
+    cand_comorbs = candidate_case.get("comorbidities", {})
+    if isinstance(cand_comorbs, dict):
+        flag_names = [k for k, v in cand_comorbs.get("flags", {}).items() if v]
+        evidence_vals = []
+        for ev_list in cand_comorbs.get("evidence", {}).values():
+            evidence_vals.extend(ev_list)
+        comorb_text = " ".join(flag_names + evidence_vals)
+    elif isinstance(cand_comorbs, list):
+        comorb_text = " ".join(str(c) for c in cand_comorbs)
     else:
         comorb_text = ""
-    
-    query_kw = query_problem.lower().strip()
-    # If the problem is "sepsis" (acute), it might not be in comorbidities.
-    # But if it is "copd" (chronic), it likely is.
-    # We assign partial score if found, but don't penalize too hard if missing (KG already matched it implicitly)
-    diag_match = 1.0 if query_kw in comorb_text else 0.5
 
-    # 3. Completeness/Acuity (Prefer cases with more active data)
-    # Count active organ supports or populated sections
+    dx_text = " ".join(filter(None, [
+        str(demo.get("primary_diagnosis_string") or ""),
+        str(demo.get("admitting_diagnosis") or ""),
+        str(demo.get("apache_admission_dx") or ""),
+    ]))
+    combined_text = f"{comorb_text} {dx_text}".strip()
+
+    # Token-overlap Jaccard between query problem and candidate diagnosis text
+    diag_sim = _token_overlap(query_problem, combined_text)
+    # Ensure a meaningful floor when keyword is literally present (substring match)
+    if query_problem.lower().strip() in combined_text.lower():
+        diag_sim = max(diag_sim, 0.60)
+
+    # ── 3. Comorbidity Jaccard ────────────────────────────────────────────────
+    comorb_sim = _comorbidity_jaccard(query_comorbidity_flags, candidate_case)
+
+    # ── 4. Severity Richness ──────────────────────────────────────────────────
+    severity_sim = _severity_richness(candidate_case)
+
+    # ── 5. Gender Match ───────────────────────────────────────────────────────
+    cand_gender = demo.get("gender") or candidate_case.get("patient", {}).get("demographics", {}).get("gender")
+    if query_gender is None or cand_gender is None:
+        gender_sim = 0.5  # unknown — neutral
+    elif query_gender.lower() == cand_gender.lower():
+        gender_sim = 1.0
+    else:
+        gender_sim = 0.0
+
+    # ── 6. APACHE Score Proximity ─────────────────────────────────────────────
+    cand_apache = candidate_case.get("apache", {}).get("apache_score")
+    # Only score this dimension if the candidate has an APACHE score
+    if cand_apache is not None:
+        # We don't know query APACHE, so use a fixed midpoint (25) as neutral reference
+        # This rewards candidates near typical ICU acuity range rather than penalizing
+        # Treat as richness signal: higher APACHE = higher acuity documented case
+        apache_sim = min(1.0, float(cand_apache) / 40.0)  # normalize: 40 = severe
+    else:
+        apache_sim = 0.0
+
+    # ── Weighted Sum ──────────────────────────────────────────────────────────
+    # When comorbidity flags are unknown, redistribute its weight to diagnosis
+    if query_comorbidity_flags is None:
+        effective_w_diag = w_diag + w_comorbidities
+        effective_w_comorb = 0.0
+    else:
+        effective_w_diag = w_diag
+        effective_w_comorb = w_comorbidities
+
+    total = (
+        effective_w_diag * diag_sim
+        + w_age * age_sim
+        + effective_w_comorb * comorb_sim
+        + w_severity * severity_sim
+        + w_gender * gender_sim
+        + w_apache * apache_sim
+    )
+    total = round(max(0.0, min(1.0, total)), 4)
+
+    # ── Extract display metadata ──────────────────────────────────────────────
+    stayid = str(
+        candidate_case.get("metadata", {}).get("patientunitstayid")
+        or candidate_case.get("metadata", {}).get("patient_unit_stay_id")
+        or "?"
+    )
     organ_support = candidate_case.get("organ_support", {})
-    active_supports = sum(1 for k, v in organ_support.items() if (isinstance(v, bool) and v) or (isinstance(v, dict) and v.get("flag")))
-    
-    completeness = min(1.0, active_supports / 3.0) # Bonus for rich cases (vent/dialysis/pressors)
-    if not completeness and candidate_case.get("key_labs_24h"):
-        completeness = 0.2  # Base score if labs exist
-
-    total = w_diag * diag_match + w_age * age_sim + w_completeness * completeness
-    total = max(0.0, min(1.0, total))
-
-    # ID retrieval
-    stayid = str(candidate_case.get("metadata", {}).get("patientunitstayid", 
-                 candidate_case.get("metadata", {}).get("patient_unit_stay_id", "?")))
-
-    # Extract useful display info
     triage_context = candidate_case.get("triage_context", {})
-    severity_flags = triage_context.get("severity_flags", [])
 
     return SimilarityResult(
         case_id=stayid,
-        score=round(total, 4),
-        patient_age=int(cand_age) if cand_age else None,
-        patient_gender=candidate_case.get("demographics", {}).get("gender"),
+        score=total,
+        patient_age=int(cand_age) if cand_age is not None else None,
+        patient_gender=cand_gender,
         primary_problem=query_problem,
         details={
-            "diagnosis_match": round(diag_match, 2),
-            "age_similarity": round(age_sim, 2),
-            "case_completeness": round(completeness, 2),
-            "active_organ_support": [k for k, v in organ_support.items() if (isinstance(v, bool) and v) or (isinstance(v, dict) and v.get("flag"))],
-            "severity_flags": severity_flags
+            "diagnosis_overlap": round(diag_sim, 4),
+            "age_similarity": round(age_sim, 4),
+            "comorbidity_jaccard": round(comorb_sim, 4),
+            "severity_richness": round(severity_sim, 4),
+            "gender_match": round(gender_sim, 4),
+            "apache_proximity": round(apache_sim, 4),
+            "apache_score": cand_apache,
+            "severity_flags": triage_context.get("severity_flags", []),
+            "active_organ_support": [
+                k for k, v in organ_support.items()
+                if (isinstance(v, bool) and v) or (isinstance(v, dict) and v.get("flag"))
+            ],
         },
-        source_case=candidate_case
+        source_case=candidate_case,
     )
 
 
@@ -309,8 +515,30 @@ def retrieve(
     problem: str,
     top_k: int = 5,
     age_tolerance: int = 15,
+    gender: Optional[str] = None,
+    comorbidity_flags: Optional[Set[str]] = None,
 ) -> List[SimilarityResult]:
-    """Retrieve top-k similar patient cases using KG discovery."""
+    """
+    Retrieve top-k similar patient cases using KG discovery + CaseLibrary.
+
+    Parameters
+    ----------
+    name : str
+        Query patient name (used for logging only).
+    age : int
+        Query patient age.
+    problem : str
+        Primary clinical problem/diagnosis string.
+    top_k : int
+        Number of top results to return.
+    age_tolerance : int
+        ±years for the SPARQL age pre-filter.
+    gender : str, optional
+        Query patient gender ('Male'/'Female'). Passed to compute_similarity.
+    comorbidity_flags : set of str, optional
+        Active comorbidity flag names for the query patient (e.g. {'chf', 'ckd'}).
+        When provided, enables Jaccard comorbidity scoring.
+    """
     if not name or not problem or age is None:
         raise ValueError(
             "Mandatory fields 'name', 'age', and 'problem' must be provided."
@@ -320,34 +548,64 @@ def retrieve(
 
     # 1. Query KG for candidate stayids
     store = _get_store()
-    candidates = _find_candidates_by_problem(
+    kg_candidates = _find_candidates_by_problem(
         store, problem, age=age, age_tolerance=age_tolerance
     )
-
-    if not candidates:
-        return []
 
     # 2. Import build_triage_case dynamically
     try:
         from src.inference.build_triage_case import build_triage_case
     except ImportError:
-        # Fallback if specific triage import fails (though it should be there)
         from src.inference.build_case import build_case as build_triage_case
 
-    # 3. Construct and Score
+    # 3. Hydrate KG candidates from SQLite
     results: List[SimilarityResult] = []
-    for cand in candidates:
+    hydrated_ids: set = set()
+
+    for cand in kg_candidates:
         stayid = int(cand["stayid"])
+        if stayid in hydrated_ids:
+            continue
         try:
-            # Build full patient case from SQLite (Triage-optimized)
             case_json = build_triage_case(stayid)
-            # Compare against original query
-            sim = compute_similarity(age, problem, case_json)
+            sim = compute_similarity(
+                age, problem, case_json,
+                query_gender=gender,
+                query_comorbidity_flags=comorbidity_flags,
+            )
             results.append(sim)
+            hydrated_ids.add(stayid)
         except Exception as e:
-            logger.warning("Skipping stayid %s: %s", stayid, e)
+            logger.warning("Skipping KG stayid %s: %s", stayid, e)
             continue
 
-    # 4. Rank by score
+    # 4. Merge CaseLibrary candidates (previously solved cases)
+    lib_candidates = _retrieve_from_case_library(problem)
+    lib_scored = 0
+    for lib_case in lib_candidates:
+        case_id = str(lib_case.get("_case_id", lib_case.get("metadata", {}).get("patient_unit_stay_id", "?")))
+        # Avoid rescoring a case already retrieved from KG
+        try:
+            numeric_id = int(case_id)
+            if numeric_id in hydrated_ids:
+                continue
+        except (ValueError, TypeError):
+            pass
+        try:
+            sim = compute_similarity(
+                age, problem, lib_case,
+                query_gender=gender,
+                query_comorbidity_flags=comorbidity_flags,
+            )
+            results.append(sim)
+            lib_scored += 1
+        except Exception as e:
+            logger.warning("Skipping CaseLibrary case %s: %s", case_id, e)
+            continue
+
+    if lib_scored:
+        logger.info("CaseLibrary contributed %d additional candidates", lib_scored)
+
+    # 5. Rank by score and return top-k
     results.sort(key=lambda r: r.score, reverse=True)
     return results[:top_k]

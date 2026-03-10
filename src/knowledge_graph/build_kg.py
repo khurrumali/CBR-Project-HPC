@@ -13,6 +13,12 @@ import os, sys, time, sqlite3, re, hashlib
 from pathlib import Path
 from collections import defaultdict
 
+# Ensure this file's directory is on sys.path so rdf_schema resolves
+# regardless of the working directory from which the script is invoked.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
 from dotenv import load_dotenv
 from pyoxigraph import Store, Quad, DefaultGraph
 
@@ -24,7 +30,8 @@ from rdf_schema import (
     CLASS_ORGAN_SYSTEM, CLASS_RAW_DRUG, SKOS_CONCEPT,
     # Data-property predicates
     EICU_BED_CATEGORY, EICU_TEACHING_STATUS, EICU_REGION,
-    EICU_AGE, EICU_GENDER, EICU_ETHNICITY, EICU_ICU_MORTALITY, EICU_APACHE_SCORE,
+    EICU_AGE, EICU_GENDER, EICU_ETHNICITY,
+    EICU_ICU_MORTALITY, EICU_HOSPITAL_MORTALITY, EICU_APACHE_SCORE,
     EICU_DIAGNOSIS_STRING, EICU_ICD9_CODE, EICU_ORGAN_SYSTEM_NAME,
     EICU_CATEGORY, EICU_PROBLEM, EICU_DETAIL, EICU_QUALIFIER,
     EICU_DIAGNOSIS_PRIORITY,
@@ -107,13 +114,13 @@ def load_patients(store: Store, conn: sqlite3.Connection) -> int:
     cur.execute("""
         SELECT p.patientunitstayid, p.age, p.gender, p.ethnicity,
                p.hospitalid, p.unitdischargestatus,
-               a.apachescore
+               p.hospitaldischargestatus, a.apachescore
         FROM patient p
         LEFT JOIN apachePatientResult a
             ON p.patientunitstayid = a.patientunitstayid
     """)
     triples = []
-    for stayid, age_raw, gender, eth, hid, discharge_status, apache in cur:
+    for stayid, age_raw, gender, eth, hid, icu_discharge_status, hosp_discharge_status, apache in cur:
         uri = patient_uri(stayid)
         triples.append(_t(uri, RDF_TYPE, CLASS_PATIENT))
 
@@ -125,10 +132,15 @@ def load_patients(store: Store, conn: sqlite3.Connection) -> int:
         if eth:
             triples.append(_t(uri, EICU_ETHNICITY, xsd_string(eth)))
 
-        # ICU mortality: True if discharged with status "Expired"
-        if discharge_status:
-            died = discharge_status.strip().lower() == "expired"
-            triples.append(_t(uri, EICU_ICU_MORTALITY, xsd_boolean(died)))
+        # ICU mortality: from unitdischargestatus
+        if icu_discharge_status:
+            icu_died = icu_discharge_status.strip().lower() == "expired"
+            triples.append(_t(uri, EICU_ICU_MORTALITY, xsd_boolean(icu_died)))
+
+        # Hospital mortality: from hospitaldischargestatus
+        if hosp_discharge_status:
+            hosp_died = hosp_discharge_status.strip().lower() in ("expired", "dead")
+            triples.append(_t(uri, EICU_HOSPITAL_MORTALITY, xsd_boolean(hosp_died)))
 
         # APACHE score (may be NULL if no result row)
         if apache is not None:
@@ -140,6 +152,9 @@ def load_patients(store: Store, conn: sqlite3.Connection) -> int:
 
     return _bulk_add(store, triples)
 
+
+def load_diagnoses(store: Store, conn: sqlite3.Connection):
+    """Phase 3: diagnosis table -> eicu:Diagnosis nodes + hasDiagnosis edges.
 
     Returns (triple_count, organ_system_names, diagnosis_set).
     """

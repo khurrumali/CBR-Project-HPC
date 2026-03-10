@@ -44,7 +44,8 @@ EICU_REGION           = NamedNode(EICU + "region")
 EICU_AGE              = NamedNode(EICU + "age")
 EICU_GENDER           = NamedNode(EICU + "gender")
 EICU_ETHNICITY        = NamedNode(EICU + "ethnicity")
-EICU_ICU_MORTALITY    = NamedNode(EICU + "icuMortality")
+EICU_ICU_MORTALITY      = NamedNode(EICU + "icuMortality")
+EICU_HOSPITAL_MORTALITY = NamedNode(EICU + "hospitalMortality")
 EICU_APACHE_SCORE     = NamedNode(EICU + "apacheScore")
 
 EICU_DIAGNOSIS_STRING = NamedNode(EICU + "diagnosisString")
@@ -150,7 +151,8 @@ def insert_ontology_triples(store: Store) -> int:
     # --- Datatype properties ---
     data_props = [
         EICU_BED_CATEGORY, EICU_TEACHING_STATUS, EICU_REGION,
-        EICU_AGE, EICU_GENDER, EICU_ETHNICITY, EICU_ICU_MORTALITY, EICU_APACHE_SCORE,
+        EICU_AGE, EICU_GENDER, EICU_ETHNICITY,
+        EICU_ICU_MORTALITY, EICU_HOSPITAL_MORTALITY, EICU_APACHE_SCORE,
         EICU_DIAGNOSIS_STRING, EICU_ICD9_CODE, EICU_ORGAN_SYSTEM_NAME,
         EICU_CATEGORY, EICU_PROBLEM, EICU_DETAIL, EICU_QUALIFIER,
         EICU_DIAGNOSIS_PRIORITY,

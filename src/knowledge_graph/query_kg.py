@@ -9,6 +9,14 @@ Usage:
 """
 
 import os, sys, argparse
+from pathlib import Path
+
+# Ensure this file's directory is on sys.path so rdf_schema resolves
+# regardless of the working directory from which the script is invoked.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
 from dotenv import load_dotenv
 from pyoxigraph import Store
 
@@ -50,11 +58,10 @@ LIMIT 10
 SELECT DISTINCT ?concept ?prefLabel ?organ
 WHERE {{
     ?concept rdf:type skos:Concept ;
-             skos:altLabel ?alt ;
              skos:prefLabel ?prefLabel ;
              skos:broader ?os .
     ?os rdfs:label ?organ .
-    FILTER(CONTAINS(LCASE(?alt), "hypertension"))
+    FILTER(CONTAINS(LCASE(str(?prefLabel)), "hypertension"))
 }}
 LIMIT 20
 """,
@@ -65,9 +72,8 @@ SELECT (COUNT(DISTINCT ?pat) AS ?patient_count)
 WHERE {{
     # 1. Find concepts labelled "hypertension"
     ?concept rdf:type skos:Concept ;
-             skos:altLabel ?alt ;
              skos:prefLabel ?prefLabel .
-    FILTER(CONTAINS(LCASE(?alt), "hypertension"))
+    FILTER(CONTAINS(LCASE(str(?prefLabel)), "hypertension"))
 
     # 2. Match prefLabel to diagnosis problem
     ?diag rdf:type eicu:Diagnosis ;

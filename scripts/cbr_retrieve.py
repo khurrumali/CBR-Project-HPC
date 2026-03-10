@@ -54,6 +54,14 @@ def main():
         help="Age range for KG filtering (default: ±15)",
     )
     parser.add_argument(
+        "--gender", type=str, default=None,
+        help="Query patient gender (e.g. 'Female', 'Male') — enables gender matching",
+    )
+    parser.add_argument(
+        "--comorbidities", type=str, default=None,
+        help="Comma-separated active comorbidity flag names (e.g. 'chf,ckd') — enables Jaccard scoring",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -68,6 +76,11 @@ def main():
 
     args = parser.parse_args()
 
+    # Parse comorbidity flags into a set
+    comorbidity_flags = None
+    if args.comorbidities:
+        comorbidity_flags = {f.strip().lower() for f in args.comorbidities.split(",") if f.strip()}
+
     try:
         # Perform retrieval
         results = retrieve(
@@ -76,6 +89,8 @@ def main():
             problem=args.problem,
             top_k=args.top_k,
             age_tolerance=args.tolerance,
+            gender=args.gender,
+            comorbidity_flags=comorbidity_flags,
         )
 
         if args.json:

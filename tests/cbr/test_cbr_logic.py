@@ -32,44 +32,63 @@ def test_numeric_closeness():
 
 def test_compute_similarity_basic():
     query_age = 60
-    query_problem = "Sepsis"
+    query_problem = "sepsis"
 
-    # Mock candidate case structure (as returned by build_case.py)
+    # Candidate in build_triage_case schema
     candidate = {
-        "metadata": {"patient_unit_stay_id": "12345"},
-        "patient": {"demographics": {"age": 60, "gender": "Female"}},
-        "clinical_data": {
-            "diagnosis": [{"diagnosis_string": "Sepsis (ICD-10)"}],
-            "medication": [{"drugname": "Norepinephrine"}] * 5,  # 5 meds
+        "metadata": {"patientunitstayid": "12345"},
+        "demographics": {
+            "age": 60,
+            "gender": "Female",
+            "apache_admission_dx": "Sepsis",
         },
+        "comorbidities": {
+            "flags": {},
+            "evidence": {},
+        },
+        "acute_physiology_24h": {},
+        "organ_support": {
+            "mechanical_ventilation": {"flag": True},
+            "vasopressor_use": {"flag": True, "agents": ["Norepinephrine"]},
+            "dialysis": {"flag": False},
+        },
+        "key_labs_24h": {"lactate": {"value": 3.5}},
+        "triage_context": {"severity_flags": ["hypotension", "mechanical ventilation"], "severity_count": 2},
+        "apache": {"apache_score": None},
     }
 
     result = compute_similarity(query_age, query_problem, candidate)
 
     assert result.case_id == "12345"
-    assert result.score > 0.8  # High score due to exact age and diagnosis match
-    assert result.details["diagnosis_match"] == 1.0
-    assert result.details["age_closeness"] == 1.0
-    assert result.details["medication_richness"] == 0.5  # 5/10
+    assert result.score > 0.4  # age exact match + diagnosis overlap + severity
+    assert result.details["age_similarity"] == 1.0    # exact age match
+    assert result.details["diagnosis_overlap"] > 0.0  # "sepsis" in apache_admission_dx
+    assert "severity_richness" in result.details
+    assert "comorbidity_jaccard" in result.details
 
 
 def test_compute_similarity_no_match():
     query_age = 20
-    query_problem = "Fracture"
+    query_problem = "fracture"
 
     candidate = {
-        "metadata": {"patient_unit_stay_id": "999"},
-        "patient": {"demographics": {"age": 80}},  # Far age
-        "clinical_data": {
-            "diagnosis": [{"diagnosis_string": "Pneumonia"}],  # Different diagnosis
-            "medication": [],  # No meds
-        },
+        "metadata": {"patientunitstayid": "999"},
+        "demographics": {"age": 80},  # Far age (diff > 30, age_sim=0)
+        "comorbidities": {"flags": {}, "evidence": {}},
+        "acute_physiology_24h": {},
+        "organ_support": {},
+        "key_labs_24h": {},
+        "triage_context": {"severity_flags": [], "severity_count": 0},
+        "apache": {"apache_score": None},
     }
 
     result = compute_similarity(query_age, query_problem, candidate)
-    assert result.details["diagnosis_match"] == 0.0
-    assert result.details["age_closeness"] == 0.0
-    assert result.score == 0.0
+    # Age diff = 60 > 30 max_diff -> age_sim = 0.0
+    assert result.details["age_similarity"] == 0.0
+    # No severity flags -> severity_richness = 0.0
+    assert result.details["severity_richness"] == 0.0
+    # Score should be very low (only possible contribution: minimal diag overlap)
+    assert result.score < 0.25
 
 
 # ---------------------------------------------------------------------------

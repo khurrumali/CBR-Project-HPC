@@ -8,3 +8,7 @@ logs/
 oxigraph_store/
 *.sqlite
 *.sqlite3
+
+# Raw data imports — never commit
+/imports/
+imports/**
